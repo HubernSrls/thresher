@@ -46,17 +46,17 @@ function update() {
 
 //----------------------------------ENTITIES----------------------------------\\
 function updatePlayer() {
-  
+
   if (game.input.keyboard.isDown(Phaser.Keyboard.S)) {
     player.state = "state_spin";
     player.body.velocity.x = 0;
     player.body.velocity.y = 0;
-    
+
     game.time.events.add(Phaser.Timer.SECOND * 0.5, function() {
       player.state = "state_idle";
     }, this);
   }
-  
+
   switch (player.state) {
     case "state_idle":
       var dir = new Phaser.Point(0, 0);
@@ -107,7 +107,7 @@ function updatePlayer() {
       player.angle += 35;
       break;
   }
-  
+
 }
 
 function updateAI() {
@@ -165,25 +165,46 @@ function updateAI() {
         if (game.math.distance(enemy.position.x, enemy.position.y, player.position.x, player.position.y) > 128) {
           enemy.state = 'state_idle';
         }
+        break;
+
+      case 'state_fall':
+        break;
 
     }
 
     // Attack player
-    if (game.math.distance(enemy.position.x, enemy.position.y, player.position.x, player.position.y) < 128) {
+    if (enemy.state !== 'state_fall' && game.math.distance(enemy.position.x, enemy.position.y, player.position.x, player.position.y) < 128) {
       game.physics.arcade.moveToObject(enemy, player, ENEMY_SPEED);
       enemy.state = 'state_attack';
     }
 
-
+    // Fall
+    if (enemy.state !== 'state_fall' && !checkOverlap(enemy, world)) {
+      var scale = game.add.tween(enemy.scale).to({ x: 0, y: 0 }, 1000, Phaser.Easing.Linear.None).start();
+      var rot = game.add.tween(enemy).to({ rotation: 360*2 }, 1000, Phaser.Easing.Linear.None).start();
+      enemy.body.velocity.set(0,0);
+      enemy.state = 'state_fall';
+      scale.onComplete.add(function() { enemy.kill(); });
+    }
 
     // Rotation
     enemy.rotation = game.physics.arcade.angleToXY(enemy, enemy.position.x + enemy.body.velocity.x, enemy.position.y + enemy.body.velocity.y) + 1.57079633;
   });
 }
 
+//------------------------------------UTILS------------------------------------\\
+function checkOverlap(spriteA, spriteB) {
+  var boundsA = spriteA.getBounds();
+  var boundsB = spriteB.getBounds();
+
+  return Phaser.Rectangle.intersects(boundsA, boundsB);
+}
+
 //----------------------------------CREATION----------------------------------\\
 function createWorld() {
   world = game.add.group();
+  world.enableBody = true;
+  world.physicsBodyType = Phaser.Physics.ARCADE;
 
   var tile;
 
@@ -191,11 +212,15 @@ function createWorld() {
     for (var j = 0; j < WORLD_SIZE; j++) {
       tile = world.create((game.world.centerX - (32*WORLD_SIZE/2)) + i*32, (game.world.centerY - (32*WORLD_SIZE/2)) + j*32, 'tileset');
       tile.frame = 1;
+      tile.body.immovable = true;
     }
   }
 
   // Set bounds
-  //world.leftBound = game.world.centerX - (32*WORLD_SIZE/2)
+  world.leftBound = game.world.centerX - (32*WORLD_SIZE/2);
+  world.rightBound = game.world.centerX + (32*WORLD_SIZE/2);
+  world.topBound = game.world.centerY - (32*WORLD_SIZE/2);
+  world.bottomBound = game.world.centerX + (32*WORLD_SIZE/2);
 }
 
 function randomWheat() {
