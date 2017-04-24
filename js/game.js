@@ -12,8 +12,9 @@ var WORLD_SIZE = 16;
 var PLAYER_SPEED = 200;
 var PLAYER_ROT = 100;
 var ENEMY_SPEED = 150;
-var HUNGRY_SPEED = 0.5;
+var HUNGRY_SPEED = 1;
 var GROW_SPEED = 4;
+var ENEMY_SPAWN_SPEED = 3;
 
 // Variables
 var world;
@@ -32,6 +33,9 @@ var gameState = 'state_game';
 function create() {
 
     game.stage.backgroundColor = '#639bff';
+  
+    //  Set-up the physics bodies
+    game.physics.startSystem(Phaser.Physics.ARCADE);
 
     // World
     createWorld();
@@ -41,6 +45,10 @@ function create() {
 
     // AI
     createAI();
+    game.time.events.loop(Phaser.Timer.SECOND * ENEMY_SPAWN_SPEED, function() {
+      createAI();
+    }, this);
+    
 
     // UI
     createUI();
@@ -50,7 +58,7 @@ function create() {
 
     // Hungry bar
     game.time.events.loop(Phaser.Timer.SECOND * HUNGRY_SPEED, function() {
-      hungry -= 1;
+      hungry -= 5;
     }, this);
 }
 
@@ -59,6 +67,8 @@ function update() {
   updateUI();
   updatePlayer();
   updateAI();
+  
+  game.physics.arcade.collide(player, enemies, hitEnemy, null, this);
 
 }
 
@@ -110,11 +120,23 @@ function updatePlayer() {
       if (game.input.keyboard.isDown(Phaser.Keyboard.A)) {
         var playerX = player.body.position.x + 16;
         var playerY = player.body.position.y + 16;
-        world.forEach(function(item) {
-          var itemX = item.position.x;
-          var itemY = item.position.y;
-          if (playerX >= itemX && playerX <= itemX + 32 && playerY >= itemY && playerY <= itemY + 32) {
-            item.frame = 0;
+        world.forEach(function(tile) {
+          var tileX = tile.position.x;
+          var tileY = tile.position.y;
+          if (playerX >= tileX && playerX <= tileX + 32 && playerY >= tileY && playerY <= tileY + 32) {
+            seedTile(tile);
+          }
+        });
+      }
+      
+      if (game.input.keyboard.isDown(Phaser.Keyboard.D)) {
+        var playerX = player.body.position.x + 16;
+        var playerY = player.body.position.y + 16;
+        world.forEach(function(tile) {
+          var tileX = tile.position.x;
+          var tileY = tile.position.y;
+          if (playerX >= tileX && playerX <= tileX + 32 && playerY >= tileY && playerY <= tileY + 32) {
+            eatTile(tile);
           }
         });
       }
@@ -129,7 +151,6 @@ function updatePlayer() {
 }
 
 function updateAI() {
-
   enemies.forEachAlive(function(enemy) {
 
     switch(enemy.state) {
@@ -208,7 +229,11 @@ function updateAI() {
       enemy.body.velocity.set(0,0);
       enemy.animations.play('idle');
       enemy.state = 'state_fall';
-      scale.onComplete.add(function() { enemy.kill(); });
+      scale.onComplete.add(function() {
+        enemy.kill();
+        score += 50;
+        scoreText.text = "SCORE " + score;
+      });
     }
 
     // Rotation
@@ -224,8 +249,15 @@ function seedTile(tile) {
 }
 
 function eatTile(tile) {
-  tile.frame = 1;
-  score += 10;
+  if (tile.frame == 0) {
+    tile.frame = 1;
+    score += 10;
+    scoreText.text = "SCORE " + score;
+    hungry += 5;
+    if (hungry > 100) {
+      hungry = 100
+    }
+  }
 }
 //------------------------------------UTILS------------------------------------\\
 function checkOverlap(spriteA, spriteB) {
@@ -326,6 +358,18 @@ function createPlayer() {
   player.animations.add('walk', [3, 4], 8, true);
   player.animations.play('idle');
   player.state = "state_idle";
+  player.body.bounce.set(1);
+  
+  player.body.onCollide = new Phaser.Signal();
+  player.body.onCollide.add(hitEnemy, this)
+}
+
+function hitEnemy() {
+  console.log("HIT");
+  enemies.forEach(function(enemy) {
+    enemy.body.velocity.x = -enemy.body.velocity.x * 4;
+    enemy.body.velocity.y = -enemy.body.velocity.y * 4;
+  });
 }
 
 function createAI() {
@@ -341,4 +385,5 @@ function createEnemy() {
   enemy.animations.add('walk', [6, 7], 8, true);
   enemy.animations.play('idle');
   enemy.state = 'state_idle';
+  enemy.body.bounce.set(1);
 }
