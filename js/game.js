@@ -2,6 +2,9 @@ var game = new Phaser.Game(800, 600, Phaser.AUTO, '', { preload: preload, create
 
 function preload() {
     game.load.spritesheet('tileset', 'assets/tileset.png', 32, 32);
+    game.load.image('hungrybar_fill', 'assets/hungrybar_fill.png', 128, 32);
+    game.load.image('hungrybar_frame', 'assets/hungrybar_frame.png', 128, 32);
+    game.load.bitmapFont('font', 'assets/font.png', 'assets/font.fnt');
 }
 
 // Constants
@@ -9,15 +12,22 @@ var WORLD_SIZE = 16;
 var PLAYER_SPEED = 200;
 var PLAYER_ROT = 100;
 var ENEMY_SPEED = 150;
+var HUNGRY_SPEED = 0.5;
+var GROW_SPEED = 4;
 
 // Variables
 var world;
 var player;
 var enemies;
 var cursors;
-
-// TEST
-var fall;
+var hungry = 100; // 0 (Game Over) - 100 (Full)
+var hungryBarFill;
+var hungryBarCrop;
+var hungryBarFrame;
+var score = 0;
+var scoreText;
+var gameOverText;
+var gameState = 'state_game';
 
 function create() {
 
@@ -31,14 +41,22 @@ function create() {
 
     // AI
     createAI();
-    createEnemy();
+
+    // UI
+    createUI();
 
     // Enable cursors
     cursors = game.input.keyboard.createCursorKeys();
+
+    // Hungry bar
+    game.time.events.loop(Phaser.Timer.SECOND * HUNGRY_SPEED, function() {
+      hungry -= 1;
+    }, this);
 }
 
 function update() {
 
+  updateUI();
   updatePlayer();
   updateAI();
 
@@ -129,6 +147,7 @@ function updateAI() {
         game.physics.arcade.moveToXY(enemy, dest.x, dest.y, ENEMY_SPEED);
 
         // Change state
+        enemy.animations.play('walk');
         enemy.state = 'state_move';
 
         break;
@@ -146,6 +165,7 @@ function updateAI() {
         });
 
         if (game.math.distance(enemy.position.x, enemy.position.y, enemy.dest.x, enemy.dest.y) < 10) {
+          enemy.animations.play('idle');
           enemy.state = 'state_idle';
         }
         break;
@@ -154,6 +174,7 @@ function updateAI() {
 
         if (game.math.distance(enemy.position.x, enemy.position.y, enemy.tileToEat.position.x, enemy.tileToEat.position.y) < 10) {
           enemy.tileToEat.frame = 1;
+          enemy.animations.play('idle');
           enemy.state = 'state_idle';
         }
 
@@ -163,6 +184,7 @@ function updateAI() {
 
         // Player out of sight
         if (game.math.distance(enemy.position.x, enemy.position.y, player.position.x, player.position.y) > 128) {
+          enemy.animations.play('idle');
           enemy.state = 'state_idle';
         }
         break;
@@ -175,6 +197,7 @@ function updateAI() {
     // Attack player
     if (enemy.state !== 'state_fall' && game.math.distance(enemy.position.x, enemy.position.y, player.position.x, player.position.y) < 128) {
       game.physics.arcade.moveToObject(enemy, player, ENEMY_SPEED);
+      enemy.animations.play('walk');
       enemy.state = 'state_attack';
     }
 
@@ -183,6 +206,7 @@ function updateAI() {
       var scale = game.add.tween(enemy.scale).to({ x: 0, y: 0 }, 1000, Phaser.Easing.Linear.None).start();
       var rot = game.add.tween(enemy).to({ rotation: 360*2 }, 1000, Phaser.Easing.Linear.None).start();
       enemy.body.velocity.set(0,0);
+      enemy.animations.play('idle');
       enemy.state = 'state_fall';
       scale.onComplete.add(function() { enemy.kill(); });
     }
@@ -192,12 +216,74 @@ function updateAI() {
   });
 }
 
+function seedTile(tile) {
+  tile.frame = 9;
+  game.time.events.add(Phaser.Timer.SECOND * GROW_SPEED, function() {
+    tile.frame = 0
+  }, this);
+}
+
+function eatTile(tile) {
+  tile.frame = 1;
+  score += 10;
+}
 //------------------------------------UTILS------------------------------------\\
 function checkOverlap(spriteA, spriteB) {
   var boundsA = spriteA.getBounds();
   var boundsB = spriteB.getBounds();
 
   return Phaser.Rectangle.intersects(boundsA, boundsB);
+}
+
+function gameOver() {
+  game.add.tween(gameOverText).to({ y: game.world.centerY }, 1000, Phaser.Easing.Bounce.Out).start();
+  game.time.events.add(Phaser.Timer.SECOND * 3, resetGame);
+}
+
+function resetGame() {
+  player.kill();
+  world.forEachAlive(function(tile) { tile.kill(); });
+  enemies.forEachAlive(function(enemy) { enemy.kill(); });
+
+  createWorld();
+  createPlayer();
+  createAI();
+  resetUI();
+
+  hungry = 100;
+  score = 0;
+
+  gameState = 'state_game';
+}
+
+//-------------------------------------UI-------------------------------------\\
+function createUI() {
+  hungryBarFrame = game.add.sprite(game.world.centerX - 64, game.height-36, 'hungrybar_frame');
+  hungryBarFill = game.add.sprite(game.world.centerX - 64, game.height-36, 'hungrybar_fill');
+  hungryBarCrop = new Phaser.Rectangle(0, 0, 0, hungryBarFill.height);
+  scoreText = game.add.bitmapText(game.world.centerX, 16, 'font', 'SCORE ' + score , 20);
+  scoreText.anchor.set(0.5);
+  gameOverText = game.add.bitmapText(game.world.centerX, -100, 'font', 'GAME OVER', 64);
+  gameOverText.anchor.set(0.5);
+}
+
+function resetUI() {
+  hungryBarFrame.kill();
+  hungryBarFill.kill();
+  scoreText.kill();
+  gameOverText.kill();
+  createUI();
+}
+
+function updateUI() {
+  var level = (hungry/100) * 128;
+  hungryBarCrop.width = (hungry/100) * 128;
+  hungryBarFill.crop(hungryBarCrop);
+
+  if (level <= 0 && gameState != 'state_over') {
+    gameOver();
+    gameState = 'state_over';
+  }
 }
 
 //----------------------------------CREATION----------------------------------\\
@@ -244,15 +330,7 @@ function createPlayer() {
 
 function createAI() {
     enemies = game.add.group();
-    fall = game.input.keyboard.addKey(Phaser.Keyboard.ONE);
-    fall.onDown.add(function() {
-      enemies.forEachAlive(function(enemy) {
-        var scale = game.add.tween(enemy.scale).to({ x: 0, y: 0 }, 1000, Phaser.Easing.Linear.None).start();
-        var rot = game.add.tween(enemy).to({ rotation: 360*2 }, 1000, Phaser.Easing.Linear.None).start();
-        enemy.body.velocity.set(0,0);
-        enemy.state = 'state_fall';
-      });
-    }, this);
+    createEnemy();
 }
 
 function createEnemy() {
