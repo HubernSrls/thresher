@@ -15,6 +15,7 @@ var ENEMY_SPEED = 150;
 var HUNGRY_SPEED = 1;
 var GROW_SPEED = 4;
 var ENEMY_SPAWN_SPEED = 3;
+var ATTACK_IMPULSE = 1000;
 
 // Variables
 var world;
@@ -33,7 +34,7 @@ var gameState = 'state_game';
 function create() {
 
     game.stage.backgroundColor = '#639bff';
-  
+
     //  Set-up the physics bodies
     game.physics.startSystem(Phaser.Physics.ARCADE);
 
@@ -46,9 +47,9 @@ function create() {
     // AI
     createAI();
     game.time.events.loop(Phaser.Timer.SECOND * ENEMY_SPAWN_SPEED, function() {
-      createAI();
+      createEnemy();
     }, this);
-    
+
 
     // UI
     createUI();
@@ -67,8 +68,8 @@ function update() {
   updateUI();
   updatePlayer();
   updateAI();
-  
-  game.physics.arcade.collide(player, enemies, hitEnemy, null, this);
+
+  //game.physics.arcade.collide(player, enemies, hitEnemy, null, this);
 
 }
 
@@ -128,7 +129,7 @@ function updatePlayer() {
           }
         });
       }
-      
+
       if (game.input.keyboard.isDown(Phaser.Keyboard.D)) {
         var playerX = player.body.position.x + 16;
         var playerY = player.body.position.y + 16;
@@ -207,6 +208,16 @@ function updateAI() {
         if (game.math.distance(enemy.position.x, enemy.position.y, player.position.x, player.position.y) > 128) {
           enemy.animations.play('idle');
           enemy.state = 'state_idle';
+        }
+
+        // Contact
+        if (checkOverlap(enemy, player)) {
+          var dir = new Phaser.Point();
+          dir.set(player.position.x-enemy.position.x, player.position.y-enemy.position.y);
+          dir.normalize();
+          player.body.velocity.set(dir.x*ATTACK_IMPULSE, dir.y*ATTACK_IMPULSE);
+          enemy.body.velocity.set(-dir.x*ATTACK_IMPULSE, -dir.y*ATTACK_IMPULSE);
+          enemy.state = "state_idle";
         }
         break;
 
@@ -359,7 +370,8 @@ function createPlayer() {
   player.animations.play('idle');
   player.state = "state_idle";
   player.body.bounce.set(1);
-  
+  player.body.drag = 10;
+
   player.body.onCollide = new Phaser.Signal();
   player.body.onCollide.add(hitEnemy, this)
 }
