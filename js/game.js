@@ -14,13 +14,23 @@ var PLAYER_ROT = 100;
 var ENEMY_SPEED = 150;
 var HUNGRY_SPEED = 1;
 var GROW_SPEED = 4;
-var ENEMY_SPAWN_SPEED = 3;
+var ENEMY_SPAWN_SPEED_MIN = 1;
+var ENEMY_SPAWN_SPEED_MAX = 4;
 var ATTACK_IMPULSE = 1000;
+var PLAYER_DRAG = 5000;
+var ENEMY_DRAG = 1000;
+
+// Tiles
+var TILE_GRASS = 1;
+var TILE_DIRT = 9;
+var TILE_WHEAT = 0;
 
 // Variables
 var world;
 var player;
 var enemies;
+var ui;
+var fallingEntities;
 var cursors;
 var hungry = 100; // 0 (Game Over) - 100 (Full)
 var hungryBarFill;
@@ -28,8 +38,9 @@ var hungryBarCrop;
 var hungryBarFrame;
 var score = 0;
 var scoreText;
+var titleText;
 var gameOverText;
-var gameState = 'state_game';
+var gameState = 'state_menu';
 
 function create() {
 
@@ -38,21 +49,24 @@ function create() {
     //  Set-up the physics bodies
     game.physics.startSystem(Phaser.Physics.ARCADE);
 
+    // Falling entities
+    fallingEntities = game.add.group();
+
     // World
     createWorld();
     randomWheat();
-    // Player
-    createPlayer();
 
     // AI
     createAI();
-    game.time.events.loop(Phaser.Timer.SECOND * ENEMY_SPAWN_SPEED, function() {
+    game.time.events.add(Phaser.Timer.SECOND * game.rnd.integerInRange(ENEMY_SPAWN_SPEED_MIN, ENEMY_SPAWN_SPEED_MAX), function() {
       createEnemy();
     }, this);
 
-
     // UI
     createUI();
+
+    // Start Game
+    startGame();
 
     // Enable cursors
     cursors = game.input.keyboard.createCursorKeys();
@@ -66,28 +80,21 @@ function create() {
 function update() {
 
   updateUI();
-  updatePlayer();
-  updateAI();
 
-  //game.physics.arcade.collide(player, enemies, hitEnemy, null, this);
+  if (gameState === 'state_game') {
+    updatePlayer();
+  }
+
+  updateAI();
 
 }
 
 //----------------------------------ENTITIES----------------------------------\\
 function updatePlayer() {
-
-  if (game.input.keyboard.isDown(Phaser.Keyboard.S)) {
-    player.state = "state_spin";
-    player.body.velocity.x = 0;
-    player.body.velocity.y = 0;
-
-    game.time.events.add(Phaser.Timer.SECOND * 0.5, function() {
-      player.state = "state_idle";
-    }, this);
-  }
-
+console.log(player.body.gravity);
   switch (player.state) {
-    case "state_idle":
+    case 'state_idle':
+
       var dir = new Phaser.Point(0, 0);
 
       if (cursors.up.isDown) {
@@ -118,6 +125,7 @@ function updatePlayer() {
         player.animations.play('walk');
       }
 
+      // Seed
       if (game.input.keyboard.isDown(Phaser.Keyboard.A)) {
         var playerX = player.body.position.x + 16;
         var playerY = player.body.position.y + 16;
@@ -130,25 +138,62 @@ function updatePlayer() {
         });
       }
 
-      if (game.input.keyboard.isDown(Phaser.Keyboard.D)) {
-        var playerX = player.body.position.x + 16;
-        var playerY = player.body.position.y + 16;
-        world.forEach(function(tile) {
-          var tileX = tile.position.x;
-          var tileY = tile.position.y;
-          if (playerX >= tileX && playerX <= tileX + 32 && playerY >= tileY && playerY <= tileY + 32) {
-            eatTile(tile);
-          }
-        });
+      // Attack
+      if (game.input.keyboard.isDown(Phaser.Keyboard.S)) {
+        player.state = 'state_spin';
+
+        game.time.events.add(Phaser.Timer.SECOND * 1, function() {
+          player.state = 'state_idle';
+        }, this);
       }
+
+      // Eat
+      game.physics.arcade.overlap(player, world, function(player, tile) { eatTile(tile); }, null, this);
 
       player.rotation = game.physics.arcade.angleToXY(player, player.position.x + player.body.velocity.x, player.position.y + player.body.velocity.y) + 1.57079633;
       break;
-    case "state_spin":
+
+    case 'state_spin':
       player.angle += 35;
+
+      // Contact
+      game.physics.arcade.overlap(player, enemies, function(player, enemy) {
+        attack(player, enemy);
+      }, null, this);
+      break;
+
+    case 'state_fall':
+      break;
+
+    case 'state_hit':
+      if (player.body.velocity.getMagnitude() <= 0) {
+        player.state = "state_idle";
+      }
+      break;
+
+    case 'state_die':
       break;
   }
 
+  // Hit
+  if (player.state === 'state_hit') {
+    player.body.drag.set(PLAYER_DRAG);
+  } else {
+    player.body.drag.set(0);
+  }
+
+  // Fall
+  if (gameState !== 'state_over' && player.state !== 'state_fall' && !checkOverlap(player, world)) {
+    var scale = game.add.tween(player.scale).to({ x: 0, y: 0 }, 1000, Phaser.Easing.Linear.None).start();
+    var rot = game.add.tween(player).to({ rotation: 360*2 }, 1000, Phaser.Easing.Linear.None).start();
+    player.body.velocity.set(0,0);
+    player.animations.play('idle');
+    fallingEntities.add(player);
+    player.body.gravity.set(0, 500);
+    player.state = 'state_fall';
+    gameState = 'state_over';
+    gameOver();
+  }
 }
 
 function updateAI() {
@@ -178,7 +223,7 @@ function updateAI() {
 
         // Look for wheat
         world.forEachAlive(function(tile) {
-            if (tile.frame === 0 && game.math.distance(enemy.position.x, enemy.position.y, tile.x, tile.y) < 128) {
+            if (tile.frame === TILE_WHEAT && game.math.distance(enemy.position.x, enemy.position.y, tile.x, tile.y) < 128) {
               game.physics.arcade.moveToXY(enemy, tile.position.x, tile.position.y, ENEMY_SPEED);
               enemy.tileToEat = tile;
               enemy.state = 'state_eat';
@@ -195,7 +240,7 @@ function updateAI() {
       case 'state_eat':
 
         if (game.math.distance(enemy.position.x, enemy.position.y, enemy.tileToEat.position.x, enemy.tileToEat.position.y) < 10) {
-          enemy.tileToEat.frame = 1;
+          enemy.tileToEat.frame = TILE_GRASS;
           enemy.animations.play('idle');
           enemy.state = 'state_idle';
         }
@@ -205,46 +250,61 @@ function updateAI() {
       case 'state_attack':
 
         // Player out of sight
-        if (game.math.distance(enemy.position.x, enemy.position.y, player.position.x, player.position.y) > 128) {
+        if (player.state !== 'state_fall' && game.math.distance(enemy.position.x, enemy.position.y, player.position.x, player.position.y) > 128) {
           enemy.animations.play('idle');
           enemy.state = 'state_idle';
         }
 
         // Contact
-        if (checkOverlap(enemy, player)) {
-          var dir = new Phaser.Point();
-          dir.set(player.position.x-enemy.position.x, player.position.y-enemy.position.y);
-          dir.normalize();
-          player.body.velocity.set(dir.x*ATTACK_IMPULSE, dir.y*ATTACK_IMPULSE);
-          enemy.body.velocity.set(-dir.x*ATTACK_IMPULSE, -dir.y*ATTACK_IMPULSE);
-          enemy.state = "state_idle";
+        if (player.state !== 'state_spin' && checkOverlap(enemy, player)) {
+          attack(enemy, player);
         }
         break;
 
       case 'state_fall':
+        enemy.body.gravity.set(0, 500);
+        break;
+
+      case 'state_hit':
+        if (enemy.body.velocity.getMagnitude() <= 0) {
+          enemy.state = "state_idle";
+        }
         break;
 
     }
 
-    // Attack player
-    if (enemy.state !== 'state_fall' && game.math.distance(enemy.position.x, enemy.position.y, player.position.x, player.position.y) < 128) {
-      game.physics.arcade.moveToObject(enemy, player, ENEMY_SPEED);
-      enemy.animations.play('walk');
-      enemy.state = 'state_attack';
-    }
+    // Global State
+    if (gameState === 'state_game' && enemy.state !== 'state_hit' && enemy.state !== 'state_fall') {
+      // Attack player
+      if (enemy.state !== 'state_fall' && game.math.distance(enemy.position.x, enemy.position.y, player.position.x, player.position.y) < 128) {
+        game.physics.arcade.moveToObject(enemy, player, ENEMY_SPEED);
+        enemy.animations.play('walk');
+        enemy.state = 'state_attack';
+      }
 
-    // Fall
-    if (enemy.state !== 'state_fall' && !checkOverlap(enemy, world)) {
-      var scale = game.add.tween(enemy.scale).to({ x: 0, y: 0 }, 1000, Phaser.Easing.Linear.None).start();
-      var rot = game.add.tween(enemy).to({ rotation: 360*2 }, 1000, Phaser.Easing.Linear.None).start();
-      enemy.body.velocity.set(0,0);
-      enemy.animations.play('idle');
-      enemy.state = 'state_fall';
-      scale.onComplete.add(function() {
-        enemy.kill();
+      // Fall
+      if (enemy.state !== 'state_fall' && !checkOverlap(enemy, world)) {
+        var scale = game.add.tween(enemy.scale).to({ x: 0, y: 0 }, 1000, Phaser.Easing.Linear.None).start();
+        var rot = game.add.tween(enemy).to({ rotation: 360*2 }, 1000, Phaser.Easing.Linear.None).start();
+        enemy.body.velocity.set(0,0);
+        enemy.animations.play('idle');
+        enemies.remove(enemy);
+        fallingEntities.add(enemy);
+        enemy.body.gravity.set(0, 500);
+        enemy.state = 'state_fall';
         score += 50;
         scoreText.text = "SCORE " + score;
-      });
+        scale.onComplete.add(function() {
+          enemy.kill();
+        });
+      }
+    }
+
+    // Drag
+    if (enemy.state === 'state_hit') {
+      enemy.body.drag.set(ENEMY_DRAG);
+    } else {
+      enemy.body.drag.set(0);
     }
 
     // Rotation
@@ -253,15 +313,17 @@ function updateAI() {
 }
 
 function seedTile(tile) {
-  tile.frame = 9;
-  game.time.events.add(Phaser.Timer.SECOND * GROW_SPEED, function() {
-    tile.frame = 0
-  }, this);
+  if (tile.frame === TILE_GRASS) {
+    tile.frame = TILE_DIRT;
+    game.time.events.add(Phaser.Timer.SECOND * GROW_SPEED, function() {
+      tile.frame = TILE_WHEAT;
+    }, this);
+  }
 }
 
 function eatTile(tile) {
-  if (tile.frame == 0) {
-    tile.frame = 1;
+  if (tile.frame === TILE_WHEAT) {
+    tile.frame = TILE_GRASS;
     score += 10;
     scoreText.text = "SCORE " + score;
     hungry += 5;
@@ -278,19 +340,26 @@ function checkOverlap(spriteA, spriteB) {
   return Phaser.Rectangle.intersects(boundsA, boundsB);
 }
 
+function startGame() {
+  var tween = game.add.tween(titleText).to({ y: game.world.centerY }, 1000, Phaser.Easing.Bounce.Out).start();
+  game.time.events.add(Phaser.Timer.SECOND * 3, function() {
+    game.add.tween(titleText).to({ y: -100 }, 1000, Phaser.Easing.Linear.Out).start();
+    resetGame();
+  });
+}
+
 function gameOver() {
   game.add.tween(gameOverText).to({ y: game.world.centerY }, 1000, Phaser.Easing.Bounce.Out).start();
   game.time.events.add(Phaser.Timer.SECOND * 3, resetGame);
 }
 
 function resetGame() {
-  player.kill();
-  world.forEachAlive(function(tile) { tile.kill(); });
-  enemies.forEachAlive(function(enemy) { enemy.kill(); });
 
-  createWorld();
+  world.forEachAlive(function(tile) { tile.frame = TILE_GRASS; });
+  enemies.forEachAlive(function(enemy) { enemy.kill(); });
+  fallingEntities.forEachAlive(function(entity) { entity.kill(); });
+
   createPlayer();
-  createAI();
   resetUI();
 
   hungry = 100;
@@ -299,8 +368,18 @@ function resetGame() {
   gameState = 'state_game';
 }
 
+function randomPosition() {
+  return new Phaser.Point(
+    game.rnd.integerInRange(world.leftBound, world.rightBound),
+    game.rnd.integerInRange(world.topBound, world.bottomBound));
+}
+
 //-------------------------------------UI-------------------------------------\\
 function createUI() {
+  if (!ui) {
+    ui = game.add.group();
+  }
+
   hungryBarFrame = game.add.sprite(game.world.centerX - 64, game.height-36, 'hungrybar_frame');
   hungryBarFill = game.add.sprite(game.world.centerX - 64, game.height-36, 'hungrybar_fill');
   hungryBarCrop = new Phaser.Rectangle(0, 0, 0, hungryBarFill.height);
@@ -308,6 +387,9 @@ function createUI() {
   scoreText.anchor.set(0.5);
   gameOverText = game.add.bitmapText(game.world.centerX, -100, 'font', 'GAME OVER', 64);
   gameOverText.anchor.set(0.5);
+  titleText = game.add.bitmapText(game.world.centerX, -100, 'font', 'THE THRESHER', 64);
+  titleText.anchor.set(0.5);
+  ui.addChild(titleText);
 }
 
 function resetUI() {
@@ -324,6 +406,8 @@ function updateUI() {
   hungryBarFill.crop(hungryBarCrop);
 
   if (level <= 0 && gameState != 'state_over') {
+    game.add.tween(player).to({ alpha: 0 }, 1000, Phaser.Easing.Linear.None).start();
+    player.state = 'state_die';
     gameOver();
     gameState = 'state_over';
   }
@@ -331,7 +415,11 @@ function updateUI() {
 
 //----------------------------------CREATION----------------------------------\\
 function createWorld() {
-  world = game.add.group();
+
+  if (!world) {
+    world = game.add.group();
+  }
+
   world.enableBody = true;
   world.physicsBodyType = Phaser.Physics.ARCADE;
 
@@ -340,7 +428,7 @@ function createWorld() {
   for (var i = 0; i < WORLD_SIZE; i++) {
     for (var j = 0; j < WORLD_SIZE; j++) {
       tile = world.create((game.world.centerX - (32*WORLD_SIZE/2)) + i*32, (game.world.centerY - (32*WORLD_SIZE/2)) + j*32, 'tileset');
-      tile.frame = 1;
+      tile.frame = TILE_GRASS;
       tile.body.immovable = true;
     }
   }
@@ -349,53 +437,61 @@ function createWorld() {
   world.leftBound = game.world.centerX - (32*WORLD_SIZE/2);
   world.rightBound = game.world.centerX + (32*WORLD_SIZE/2);
   world.topBound = game.world.centerY - (32*WORLD_SIZE/2);
-  world.bottomBound = game.world.centerX + (32*WORLD_SIZE/2);
+  world.bottomBound = game.world.centerY + (32*WORLD_SIZE/2);
 }
 
 function randomWheat() {
     world.forEachAlive(function(tile) {
       var rnd = game.rnd.integerInRange(0, 100);
       if (rnd > 90) {
-        tile.frame = 0;
+        tile.frame = TILE_WHEAT;
       }
     });
 }
 
 function createPlayer() {
-  player = game.add.sprite(100, 100, 'tileset');
+  var rndPos = randomPosition();
+
+  if (player) { player.kill(); }
+  player = game.add.sprite(rndPos.x, rndPos.y, 'tileset');
+
   player.anchor.set(0.5);
   game.physics.arcade.enable(player);
   player.animations.add('idle', [2]);
   player.animations.add('walk', [3, 4], 8, true);
   player.animations.play('idle');
-  player.state = "state_idle";
-  player.body.bounce.set(1);
-  player.body.drag = 10;
-
-  player.body.onCollide = new Phaser.Signal();
-  player.body.onCollide.add(hitEnemy, this)
+  player.scale.set(1,1);
+  player.state = 'state_idle';
 }
 
-function hitEnemy() {
-  console.log("HIT");
-  enemies.forEach(function(enemy) {
-    enemy.body.velocity.x = -enemy.body.velocity.x * 4;
-    enemy.body.velocity.y = -enemy.body.velocity.y * 4;
-  });
+function attack(attacker, attacked) {
+  var dir = new Phaser.Point();
+  dir.set(attacked.position.x-attacker.position.x, attacked.position.y-attacker.position.y);
+  dir.normalize();
+  attacked.body.velocity.set(dir.x*ATTACK_IMPULSE,dir.y*ATTACK_IMPULSE);
+  attacker.state = 'state_idle';
+  attacked.state = 'state_hit';
 }
 
 function createAI() {
+  if (!enemies) {
     enemies = game.add.group();
-    createEnemy();
+  }
 }
 
 function createEnemy() {
-  var enemy = enemies.create(200, 200, 'tileset');
+  var rndPos = randomPosition();
+
+  var enemy = enemies.create(rndPos.x, rndPos.y, 'tileset');
   enemy.anchor.set(0.5);
   game.physics.arcade.enable(enemy);
   enemy.animations.add('idle', [5]);
   enemy.animations.add('walk', [6, 7], 8, true);
   enemy.animations.play('idle');
   enemy.state = 'state_idle';
-  enemy.body.bounce.set(1);
+
+  // New enemy
+  game.time.events.add(Phaser.Timer.SECOND * game.rnd.integerInRange(ENEMY_SPAWN_SPEED_MIN, ENEMY_SPAWN_SPEED_MAX), function() {
+    createEnemy();
+  }, this);
 }
